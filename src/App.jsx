@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  CheckCircle2, 
-  Circle, 
-  Trash2, 
-  Edit3, 
+  Target,
   Plus, 
   Search, 
-  Sparkles, 
   Layers, 
-  CheckSquare, 
   Clock, 
+  CheckSquare,
+  RotateCcw,
+  Square,
+  CheckCircle2,
+  Edit3, 
+  Trash2, 
   X, 
-  AlertCircle 
+  Sun, 
+  Moon, 
+  CircleDot,
+  Settings,
+  ArrowLeft
 } from 'lucide-react';
 
 const API_BASE = "http://127.0.0.1:5000/api/tasks";
@@ -19,21 +24,56 @@ const API_BASE = "http://127.0.0.1:5000/api/tasks";
 export default function App() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentView, setCurrentView] = useState("dashboard"); // "dashboard" or "settings"
+
+  // Controls & Filters: All, Not Started, In Progress, Stopped
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  
+  const [statusFilter, setStatusFilter] = useState("all"); 
+  const [sortBy, setSortBy] = useState("recent"); 
+
+  // Theme State: 'night', 'day', 'system'
+  const [theme, setTheme] = useState(() => localStorage.getItem("taskbuddy_theme") || "night");
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState(null); // null = create mode, task object = edit mode
+  const [editingTask, setEditingTask] = useState(null);
 
   // Form State
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState("medium");
+  const [status, setStatus] = useState("not started");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // 1. Fetch tasks
+  // ----------------------------------------------------
+  // Theme Management (Night, Day, System)
+  // ----------------------------------------------------
+  useEffect(() => {
+    localStorage.setItem("taskbuddy_theme", theme);
+    
+    const applyTheme = (t) => {
+      if (t === "system") {
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.setAttribute("data-theme", prefersDark ? "night" : "day");
+      } else {
+        document.documentElement.setAttribute("data-theme", t);
+      }
+    };
+
+    applyTheme(theme);
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      if (theme === "system") applyTheme("system");
+    };
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
+  // ----------------------------------------------------
+  // API Calls
+  // ----------------------------------------------------
   const fetchTasks = async () => {
     try {
       setLoading(true);
@@ -53,12 +93,13 @@ export default function App() {
     fetchTasks();
   }, []);
 
-  // 2. Open Modal for Create or Edit
+  // Open Create / Edit Modal
   const openCreateModal = () => {
     setEditingTask(null);
     setTitle("");
     setDesc("");
     setPriority("medium");
+    setStatus("not started");
     setErrorMsg("");
     setIsModalOpen(true);
   };
@@ -68,11 +109,12 @@ export default function App() {
     setTitle(task.title);
     setDesc(task.description || "");
     setPriority(task.priority || "medium");
+    setStatus(task.status || "not started");
     setErrorMsg("");
     setIsModalOpen(true);
   };
 
-  // 3. Save (Create or Update)
+  // Save Task (POST or PUT)
   const handleSaveTask = async (e) => {
     e.preventDefault();
     if (!title.trim()) {
@@ -84,18 +126,20 @@ export default function App() {
       setSubmitting(true);
       setErrorMsg("");
 
+      const payload = {
+        title: title.trim(),
+        description: desc.trim(),
+        priority: priority,
+        status: status,
+        completed: status === "completed"
+      };
+
       if (editingTask) {
-        // UPDATE (PUT)
         const res = await fetch(`${API_BASE}/${editingTask.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title.trim(),
-            description: desc.trim(),
-            priority: priority
-          })
+          body: JSON.stringify(payload)
         });
-
         const data = await res.json();
         if (res.ok) {
           setTasks(prev => prev.map(t => t.id === editingTask.id ? data.task : t));
@@ -104,18 +148,11 @@ export default function App() {
           setErrorMsg(data.error || "Failed to update task");
         }
       } else {
-        // CREATE (POST)
         const res = await fetch(API_BASE, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title.trim(),
-            description: desc.trim(),
-            priority: priority,
-            completed: false
-          })
+          body: JSON.stringify(payload)
         });
-
         const data = await res.json();
         if (res.ok) {
           setTasks(prev => [data.task, ...prev]);
@@ -131,27 +168,26 @@ export default function App() {
     }
   };
 
-  // 4. Toggle Complete
-  const toggleComplete = async (task) => {
-    const updatedStatus = !task.completed;
-    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, completed: updatedStatus } : t));
+  // Set Task Status Directly (Restart, Stop, Complete)
+  const setTaskStatus = async (task, newStatus) => {
+    const isCompleted = newStatus === "completed";
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: newStatus, completed: isCompleted } : t));
 
     try {
       await fetch(`${API_BASE}/${task.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed: updatedStatus })
+        body: JSON.stringify({ status: newStatus, completed: isCompleted })
       });
     } catch (err) {
       fetchTasks();
     }
   };
 
-  // 5. Delete Task
+  // Delete Task
   const deleteTask = async (id) => {
     if (!window.confirm("Are you sure you want to delete this task?")) return;
     setTasks(prev => prev.filter(t => t.id !== id));
-
     try {
       await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
     } catch (err) {
@@ -159,7 +195,7 @@ export default function App() {
     }
   };
 
-  // Format timestamp helper
+  // Helper formatting
   const formatTime = (isoString) => {
     if (!isoString) return "";
     try {
@@ -175,186 +211,355 @@ export default function App() {
     }
   };
 
-  // Filter tasks
-  const filteredTasks = tasks.filter(task => {
-    const matchesSearch = task.title.toLowerCase().includes(search.toLowerCase()) || 
-                          (task.description && task.description.toLowerCase().includes(search.toLowerCase()));
-    if (!matchesSearch) return false;
+  // ----------------------------------------------------
+  // Counts & Filtering
+  // ----------------------------------------------------
+  const totalTasks = tasks.length;
+  // Active = In Progress
+  const activeCount = tasks.filter(t => t.status === "in progress" || t.status === "started").length;
+  // Completed = Completed
+  const completedCount = tasks.filter(t => t.status === "completed" || t.completed).length;
+  
+  // Specific filter counts for the 4 filter tabs
+  const notStartedCount = tasks.filter(t => (t.status || "not started") === "not started").length;
+  const inProgressCount = tasks.filter(t => t.status === "in progress").length;
+  const stoppedCount = tasks.filter(t => t.status === "stopped").length;
 
-    if (filter === "completed") return task.completed;
-    if (filter === "active") return !task.completed;
-    return true;
-  });
+  const filteredAndSortedTasks = tasks
+    .filter(task => {
+      const matchesSearch = task.title.toLowerCase().includes(search.toLowerCase()) || 
+                            (task.description && task.description.toLowerCase().includes(search.toLowerCase()));
+      if (!matchesSearch) return false;
 
-  const totalCount = tasks.length;
-  const completedCount = tasks.filter(t => t.completed).length;
-  const pendingCount = totalCount - completedCount;
-  const highPriorityCount = tasks.filter(t => t.priority === "high" && !t.completed).length;
+      const currentStatus = task.status || "not started";
+      if (statusFilter === "not started") return currentStatus === "not started";
+      if (statusFilter === "in progress") return currentStatus === "in progress";
+      if (statusFilter === "stopped") return currentStatus === "stopped";
+      return true; // "all"
+    })
+    .sort((a, b) => {
+      if (sortBy === "priority") {
+        const priorityRank = { high: 3, medium: 2, low: 1 };
+        return (priorityRank[b.priority] || 2) - (priorityRank[a.priority] || 2);
+      }
+      if (sortBy === "alphabetical") {
+        return a.title.localeCompare(b.title);
+      }
+      if (sortBy === "older") {
+        return (new Date(a.created_at || 0)) - (new Date(b.created_at || 0));
+      }
+      return (new Date(b.created_at || 0)) - (new Date(a.created_at || 0));
+    });
 
   return (
     <div className="app-container">
-      {/* Navbar */}
+      {/* Navbar with Task Buddy, Avatar & Settings */}
       <nav className="navbar">
         <div className="brand-section">
           <div className="brand-icon">
-            <Sparkles size={24} color="#fff" />
+            <Target size={24} />
           </div>
           <div>
-            <h1 className="brand-title">TaskFlow OS</h1>
-            <div className="brand-subtitle">
-              <span className="status-dot"></span>
-              Flask & Cloud Firestore Connected
-            </div>
+            <h1 className="brand-title">Task Buddy</h1>
           </div>
         </div>
 
-        <button className="btn-primary" onClick={openCreateModal}>
-          <Plus size={18} />
-          <span>New Task</span>
-        </button>
+        {/* Avatar Greeting Badge */}
+        <div className="user-greeting">
+          <div className="avatar-circle">K</div>
+          <span className="greeting-text">Hi, welcome back!</span>
+        </div>
+
+        <div className="nav-actions">
+          {currentView === "dashboard" ? (
+            <>
+              <button className="btn-primary" onClick={openCreateModal}>
+                <Plus size={18} />
+                <span>Add Task</span>
+              </button>
+
+              <button 
+                className="nav-icon-btn" 
+                title="Settings & Themes"
+                onClick={() => setCurrentView("settings")}
+              >
+                <Settings size={20} />
+              </button>
+            </>
+          ) : (
+            <button className="btn-primary" onClick={() => setCurrentView("dashboard")}>
+              <ArrowLeft size={18} />
+              <span>Back to Dashboard</span>
+            </button>
+          )}
+        </div>
       </nav>
 
-      {/* Stats Bar */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: "rgba(99, 102, 241, 0.15)", color: "#818cf8" }}>
-            <Layers size={26} />
-          </div>
-          <div>
-            <div className="stat-num">{totalCount}</div>
-            <div className="stat-label">Total Tasks</div>
-          </div>
-        </div>
+      {/* ====================================================
+          VIEW 1: SETTINGS PAGE
+         ==================================================== */}
+      {currentView === "settings" ? (
+        <div className="settings-container">
+          <h2 className="settings-title">App Settings & Appearance</h2>
+          <p className="settings-desc">Choose your preferred visual theme across Task Buddy.</p>
 
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#34d399" }}>
-            <CheckSquare size={26} />
-          </div>
-          <div>
-            <div className="stat-num">{completedCount}</div>
-            <div className="stat-label">Completed</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#fbbf24" }}>
-            <Clock size={26} />
-          </div>
-          <div>
-            <div className="stat-num">{pendingCount}</div>
-            <div className="stat-label">In Progress</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper" style={{ background: "rgba(244, 63, 94, 0.15)", color: "#fb7185" }}>
-            <AlertCircle size={26} />
-          </div>
-          <div>
-            <div className="stat-num">{highPriorityCount}</div>
-            <div className="stat-label">High Priority</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search & Filter Controls */}
-      <div className="controls-bar">
-        <div className="search-wrapper">
-          <Search size={18} className="search-icon" />
-          <input 
-            type="text" 
-            placeholder="Search tasks..." 
-            className="search-input"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <div className="filter-tabs">
-          <button className={`filter-tab ${filter === "all" ? "active" : ""}`} onClick={() => setFilter("all")}>
-            All ({totalCount})
-          </button>
-          <button className={`filter-tab ${filter === "active" ? "active" : ""}`} onClick={() => setFilter("active")}>
-            Active ({pendingCount})
-          </button>
-          <button className={`filter-tab ${filter === "completed" ? "active" : ""}`} onClick={() => setFilter("completed")}>
-            Done ({completedCount})
-          </button>
-        </div>
-      </div>
-
-      {/* Tasks Grid */}
-      <div className="tasks-grid">
-        {loading ? (
-          <div className="empty-state">
-            <p>Loading your Cloud Firestore tasks...</p>
-          </div>
-        ) : filteredTasks.length === 0 ? (
-          <div className="empty-state">
-            <Layers size={40} className="empty-icon" />
-            <h3>No tasks found</h3>
-            <p style={{ color: "#64748b", marginTop: "6px" }}>
-              {search ? "No tasks match your search criteria." : "Create your first task to get started!"}
-            </p>
-          </div>
-        ) : (
-          filteredTasks.map(task => (
-            <div key={task.id} className={`task-card ${task.completed ? "completed" : ""}`}>
-              <div>
-                <div className="task-header">
-                  <button className="toggle-btn" onClick={() => toggleComplete(task)}>
-                    {task.completed ? <CheckCircle2 size={22} color="#10b981" /> : <Circle size={22} />}
-                  </button>
-                  <h3 className="task-title">{task.title}</h3>
-                </div>
-                {task.description && <p className="task-desc">{task.description}</p>}
+          <div className="theme-options-grid">
+            <div 
+              className={`theme-card ${theme === "day" ? "active" : ""}`}
+              onClick={() => setTheme("day")}
+            >
+              <div className="theme-card-icon" style={{ color: "#f59e0b" }}>
+                <Sun size={28} />
               </div>
+              <div className="theme-card-label">Day Mode</div>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", textAlign: "center" }}>
+                Clean, crisp light theme with elevated clarity.
+              </p>
+            </div>
 
+            <div 
+              className={`theme-card ${theme === "night" ? "active" : ""}`}
+              onClick={() => setTheme("night")}
+            >
+              <div className="theme-card-icon" style={{ color: "#a855f7" }}>
+                <Moon size={28} />
+              </div>
+              <div className="theme-card-label">Night Mode</div>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", textAlign: "center" }}>
+                Deep, modern glassmorphic dark theme.
+              </p>
+            </div>
+
+            <div 
+              className={`theme-card ${theme === "system" ? "active" : ""}`}
+              onClick={() => setTheme("system")}
+            >
+              <div className="theme-card-icon" style={{ color: "#3b82f6" }}>
+                <CircleDot size={28} />
+              </div>
+              <div className="theme-card-label">System Theme</div>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", textAlign: "center" }}>
+                Syncs automatically with your OS preference.
+              </p>
+            </div>
+          </div>
+
+          
+        </div>
+      ) : (
+
+      /* ====================================================
+          VIEW 2: TASKS DASHBOARD
+         ==================================================== */
+        <>
+          {/* Exact 3 Boxes: Total Tasks, Active, Completed */}
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-icon-wrapper" style={{ background: "rgba(99, 102, 241, 0.15)", color: "#818cf8" }}>
+                <Layers size={24} />
+              </div>
               <div>
-                {/* Timestamp tracking display */}
-                <div className="task-timestamp">
-                  {task.updated_at ? (
-                    <span>Edited {formatTime(task.updated_at)}</span>
-                  ) : task.created_at ? (
-                    <span>Created {formatTime(task.created_at)}</span>
-                  ) : null}
-                </div>
-
-                <div className="task-footer">
-                  <span className={`priority-badge priority-${task.priority || "medium"}`}>
-                    {task.priority || "medium"}
-                  </span>
-
-                  <div className="task-actions">
-                    <button 
-                      className="action-btn edit-btn" 
-                      title="Edit task"
-                      onClick={() => openEditModal(task)}
-                    >
-                      <Edit3 size={16} />
-                    </button>
-                    <button 
-                      className="action-btn delete-btn" 
-                      title="Delete task"
-                      onClick={() => deleteTask(task.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
+                <div className="stat-num">{totalTasks}</div>
+                <div className="stat-label">Total Tasks</div>
               </div>
             </div>
-          ))
-        )}
-      </div>
 
-      {/* Create / Edit Modal */}
+            <div className="stat-card">
+              <div className="stat-icon-wrapper" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#fbbf24" }}>
+                <Clock size={24} />
+              </div>
+              <div>
+                <div className="stat-num">{activeCount}</div>
+                <div className="stat-label">Active</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon-wrapper" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#34d399" }}>
+                <CheckSquare size={24} />
+              </div>
+              <div>
+                <div className="stat-num">{completedCount}</div>
+                <div className="stat-label">Completed</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Controls Bar: Search, 4 Sorts, and 4 Filter Tabs (All, Not Started, In Progress, Stopped) */}
+          <div className="controls-bar">
+            <div className="search-wrapper">
+              <Search size={18} className="search-icon" />
+              <input 
+                type="text" 
+                placeholder="Search tasks by title or details..." 
+                className="search-input"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="controls-right">
+              {/* 4 Sorting Options */}
+              <select 
+                className="sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                title="Sort tasks"
+              >
+                <option value="recent">Sort: Recent (Newest)</option>
+                <option value="older">Sort: Older (Oldest)</option>
+                <option value="priority">Sort: By Priority</option>
+                <option value="alphabetical">Sort: A – Z</option>
+              </select>
+
+              {/* Exact 4 Filter Tabs with counts beside Sort */}
+              <div className="filter-tabs">
+                <button 
+                  className={`filter-tab ${statusFilter === "all" ? "active" : ""}`} 
+                  onClick={() => setStatusFilter("all")}
+                >
+                  All ({totalTasks})
+                </button>
+                <button 
+                  className={`filter-tab ${statusFilter === "not started" ? "active" : ""}`} 
+                  onClick={() => setStatusFilter("not started")}
+                >
+                  Not Started ({notStartedCount})
+                </button>
+                <button 
+                  className={`filter-tab ${statusFilter === "in progress" ? "active" : ""}`} 
+                  onClick={() => setStatusFilter("in progress")}
+                >
+                  In Progress ({inProgressCount})
+                </button>
+                <button 
+                  className={`filter-tab ${statusFilter === "stopped" ? "active" : ""}`} 
+                  onClick={() => setStatusFilter("stopped")}
+                >
+                  Stopped ({stoppedCount})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Tasks Grid */}
+          <div className="tasks-grid">
+            {loading ? (
+              <div className="empty-state">
+                <p>Loading...</p>
+              </div>
+            ) : filteredAndSortedTasks.length === 0 ? (
+              <div className="empty-state">
+                <Target size={44} className="empty-icon" />
+                <h3>No tasks found</h3>
+                <p style={{ color: "var(--text-dim)", marginTop: "6px" }}>
+                  {search ? "No tasks match your search or filter." : "Click Add Task to get started!"}
+                </p>
+              </div>
+            ) : (
+              filteredAndSortedTasks.map(task => {
+                const currentStatus = task.status || "not started";
+                const currentPriority = task.priority || "medium";
+                const statusClass = currentStatus.replace(" ", "-");
+
+                return (
+                  <div key={task.id} className="task-card">
+                    <div>
+                      <div className="task-header">
+                        <h3 className="task-title">{task.title}</h3>
+                      </div>
+                      {task.description && <p className="task-desc">{task.description}</p>}
+                    </div>
+
+                    <div>
+                      {/* Priority and Status Badges (Static - cycling removed) */}
+                      <div className="task-badges">
+                        <span className={`badge priority-${currentPriority}`}>
+                          {currentPriority}
+                        </span>
+
+                        <span className={`status-badge status-${statusClass}`}>
+                          {currentStatus}
+                        </span>
+                      </div>
+
+                      {/* Footer with Timestamp and 5 Round Colored Action Icons */}
+                      <div className="task-footer">
+                        {/* Timestamp tracking */}
+                        <div className="task-timestamp">
+                          {task.updated_at ? (
+                            <span>Edited {formatTime(task.updated_at)}</span>
+                          ) : task.created_at ? (
+                            <span>Created {formatTime(task.created_at)}</span>
+                          ) : null}
+                        </div>
+
+                        {/* Round Icon Buttons: Restart, Stop, Complete, Edit, Delete */}
+                        <div className="task-actions">
+                          {/* 1. Restart Icon (Cyan) */}
+                          <button 
+                            className="action-btn restart-btn" 
+                            title="Restart Task"
+                            onClick={() => setTaskStatus(task, "in progress")}
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+
+                          {/* 2. Stop Icon (Amber) */}
+                          <button 
+                            className="action-btn stop-btn" 
+                            title="Stop Task"
+                            onClick={() => setTaskStatus(task, "stopped")}
+                          >
+                            <Square size={14} />
+                          </button>
+
+                          {/* 3. Complete Icon (Emerald) */}
+                          <button 
+                            className="action-btn complete-btn" 
+                            title="Complete Task"
+                            onClick={() => setTaskStatus(task, "completed")}
+                          >
+                            <CheckCircle2 size={16} />
+                          </button>
+
+                          {/* 4. Edit Icon (Purple) */}
+                          <button 
+                            className="action-btn edit-btn" 
+                            title="Edit Task"
+                            onClick={() => openEditModal(task)}
+                          >
+                            <Edit3 size={15} />
+                          </button>
+
+                          {/* 5. Delete Icon (Rose) */}
+                          <button 
+                            className="action-btn delete-btn" 
+                            title="Delete Task"
+                            onClick={() => deleteTask(task.id)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ====================================================
+          MODAL: ADD OR EDIT TASK
+         ==================================================== */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">
-                {editingTask ? "Edit Task" : "Create New Task"}
+                {editingTask ? "Edit Task" : "Add Task"}
               </h2>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>
                 <X size={20} />
@@ -373,7 +578,7 @@ export default function App() {
                 <input 
                   type="text" 
                   className="form-input" 
-                  placeholder="e.g. Implement User Authentication"
+                  placeholder="e.g. Design Landing Page"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   autoFocus
@@ -384,12 +589,13 @@ export default function App() {
                 <label className="form-label">Description (Optional)</label>
                 <textarea 
                   className="form-textarea" 
-                  placeholder="Add details, notes or acceptance criteria..."
+                  placeholder="Add notes, specifications, or details..."
                   value={desc}
                   onChange={(e) => setDesc(e.target.value)}
                 />
               </div>
 
+              {/* Priority Dropdown */}
               <div className="form-group">
                 <label className="form-label">Priority</label>
                 <select 
@@ -397,9 +603,24 @@ export default function App() {
                   value={priority}
                   onChange={(e) => setPriority(e.target.value)}
                 >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
                   <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+
+              {/* Status Dropdown */}
+              <div className="form-group">
+                <label className="form-label">Progress Status</label>
+                <select 
+                  className="form-select"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
+                  <option value="not started">Not Started</option>
+                  <option value="in progress">In Progress</option>
+                  <option value="stopped">Stopped</option>
+                  <option value="completed">Completed</option>
                 </select>
               </div>
 
@@ -408,7 +629,7 @@ export default function App() {
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary" disabled={submitting}>
-                  {submitting ? "Saving..." : (editingTask ? "Update Task" : "Create Task")}
+                  {submitting ? "Saving..." : (editingTask ? "Update Task" : "Add Task")}
                 </button>
               </div>
             </form>
